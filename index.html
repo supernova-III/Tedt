@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MSFS Planner на MapLibre</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <style>
+    body { margin: 0; padding: 0; }
+    #map { width: 100vw; height: 100vh; }
+    #exportBtn {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1;
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <button id="exportBtn">💾 Экспорт в .pln</button>
+  <div id="map"></div>
+  <script>
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',
+      center: [37.6, 55.75], // Москва
+      zoom: 6
+    });
+
+    const waypoints = [];
+
+    map.on('click', function (e) {
+      const { lng, lat } = e.lngLat;
+      waypoints.push({ lat, lng });
+
+      // Маркер
+      new maplibregl.Marker().setLngLat([lng, lat]).addTo(map);
+
+      // Линия
+      if (waypoints.length > 1) {
+        const coords = waypoints.map(p => [p.lng, p.lat]);
+        map.getSource('route')?.setData({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords }
+        }) || map.addSource('route', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: coords }
+          }
+        });
+
+        map.getLayer('route') || map.addLayer({
+          id: 'route',
+          type: 'line',
+          source: 'route',
+          paint: {
+            'line-color': '#ff0000',
+            'line-width': 3
+          }
+        });
+      }
+    });
+
+    // Генерация PLN
+    function exportPLN() {
+      if (waypoints.length < 2) {
+        alert("Добавьте как минимум две точки");
+        return;
+      }
+
+      const pln = `<?xml version="1.0" encoding="UTF-8"?>
+<SimBase.Document Type="FlightPlan.FlightPlan">
+  <FlightPlan.FlightPlan>
+    <Title>MapLibre Flight Plan</Title>
+    <DepartureID>USER</DepartureID>
+    <DestinationID>USER</DestinationID>
+    <RouteType>VFR</RouteType>
+    <CruisingAlt>5000</CruisingAlt>
+    <FlightPlan.FlightPlanWaypoints>
+      ${waypoints.map((p, i) => `
+      <FlightPlanWaypoint>
+        <WorldPosition>${p.lat.toFixed(6)};${p.lng.toFixed(6)};0</WorldPosition>
+        <Altitude>0</Altitude>
+        <WaypointType>User</WaypointType>
+        <ICAO>
+          <ICAOIdent>USER</ICAOIdent>
+        </ICAO>
+      </FlightPlanWaypoint>
+      `).join("")}
+    </FlightPlan.FlightPlanWaypoints>
+  </FlightPlan.FlightPlan>
+</SimBase.Document>`;
+
+      const blob = new Blob([pln], { type: "application/xml;charset=utf-8" });
+      saveAs(blob, "flightplan.pln");
+    }
+
+    document.getElementById("exportBtn").addEventListener("click", exportPLN);
+  </script>
+</body>
+</html>
