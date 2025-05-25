@@ -2,79 +2,127 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>MSFS Planner на MapLibre</title>
-  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>MSFS Планировщик на OpenStreetMap</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
   <style>
-    body { margin: 0; padding: 0; }
-    #map { width: 100vw; height: 100vh; }
-    #exportBtn {
+    html, body { margin: 0; padding: 0; height: 100%; font-family: sans-serif; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    .controls {
       position: absolute;
       top: 10px;
       left: 10px;
-      z-index: 1;
-      background: white;
+      background: rgba(255,255,255,0.9);
       padding: 10px;
-      border-radius: 5px;
+      border-radius: 8px;
+      z-index: 1;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    select, button {
+      width: 100%;
+      margin-top: 5px;
+      padding: 6px;
     }
   </style>
 </head>
 <body>
-  <button id="exportBtn">💾 Экспорт в .pln</button>
+  <div class="controls">
+    <label for="pointType">Тип точки:</label>
+    <select id="pointType">
+      <option value="Departure">Вылет</option>
+      <option value="Waypoint" selected>Маршрут</option>
+      <option value="Arrival">Прибытие</option>
+    </select>
+    <button id="exportBtn">💾 Экспорт в .pln</button>
+  </div>
   <div id="map"></div>
+
   <script>
     const map = new maplibregl.Map({
       container: 'map',
-      style: 'https://demotiles.maplibre.org/style.json',
-      center: [37.6, 55.75], // Москва
-      zoom: 6
+      center: [37.6, 55.75],
+      zoom: 6,
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: "raster",
+            tiles: [
+              "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            ],
+            tileSize: 256,
+            attribution: "© OpenStreetMap contributors"
+          }
+        },
+        layers: [
+          {
+            id: "osm",
+            type: "raster",
+            source: "osm"
+          }
+        ]
+      }
     });
 
     const waypoints = [];
 
     map.on('click', function (e) {
       const { lng, lat } = e.lngLat;
-      waypoints.push({ lat, lng });
+      const type = document.getElementById('pointType').value;
 
-      // Маркер
-      new maplibregl.Marker().setLngLat([lng, lat]).addTo(map);
+      waypoints.push({ lat, lng, type });
 
-      // Линия
+      const color = type === "Departure" ? "green" :
+                    type === "Arrival"   ? "red" : "blue";
+
+      const el = document.createElement("div");
+      el.style.background = color;
+      el.style.width = "12px";
+      el.style.height = "12px";
+      el.style.borderRadius = "50%";
+
+      new maplibregl.Marker(el).setLngLat([lng, lat]).addTo(map);
+
       if (waypoints.length > 1) {
         const coords = waypoints.map(p => [p.lng, p.lat]);
-        map.getSource('route')?.setData({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: coords }
-        }) || map.addSource('route', {
-          type: 'geojson',
-          data: {
+        const routeSource = map.getSource('route');
+
+        if (routeSource) {
+          routeSource.setData({
             type: 'Feature',
             geometry: { type: 'LineString', coordinates: coords }
-          }
-        });
+          });
+        } else {
+          map.addSource('route', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: coords }
+            }
+          });
 
-        map.getLayer('route') || map.addLayer({
-          id: 'route',
-          type: 'line',
-          source: 'route',
-          paint: {
-            'line-color': '#ff0000',
-            'line-width': 3
-          }
-        });
+          map.addLayer({
+            id: 'route',
+            type: 'line',
+            source: 'route',
+            paint: {
+              'line-color': '#00ffff',
+              'line-width': 3
+            }
+          });
+        }
       }
     });
 
-    // Генерация PLN
     function exportPLN() {
       if (waypoints.length < 2) {
-        alert("Добавьте как минимум две точки");
+        alert("Нужно минимум две точки");
         return;
       }
 
-      const pln = `<?xml version="1.0" encoding="UTF-8"?>
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <SimBase.Document Type="FlightPlan.FlightPlan">
   <FlightPlan.FlightPlan>
     <Title>MapLibre Flight Plan</Title>
@@ -83,21 +131,19 @@
     <RouteType>VFR</RouteType>
     <CruisingAlt>5000</CruisingAlt>
     <FlightPlan.FlightPlanWaypoints>
-      ${waypoints.map((p, i) => `
+      ${waypoints.map(p => `
       <FlightPlanWaypoint>
         <WorldPosition>${p.lat.toFixed(6)};${p.lng.toFixed(6)};0</WorldPosition>
         <Altitude>0</Altitude>
-        <WaypointType>User</WaypointType>
-        <ICAO>
-          <ICAOIdent>USER</ICAOIdent>
-        </ICAO>
+        <WaypointType>${p.type}</WaypointType>
+        <ICAO><ICAOIdent>USER</ICAOIdent></ICAO>
       </FlightPlanWaypoint>
-      `).join("")}
+      `).join('')}
     </FlightPlan.FlightPlanWaypoints>
   </FlightPlan.FlightPlan>
 </SimBase.Document>`;
 
-      const blob = new Blob([pln], { type: "application/xml;charset=utf-8" });
+      const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' });
       saveAs(blob, "flightplan.pln");
     }
 
